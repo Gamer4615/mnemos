@@ -1,0 +1,842 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mnemos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&family=Syne:wght@700;800&display=swap">
+<style>
+  /* Layout: 4:3 playfield on the left, "boss readout" column on the right; stacks to one column on phones.
+     Committed dark look: amber is the player, rose is the threat, cyan is what the boss has learned. */
+  :root {
+    --bg: #0d1218;
+    --panel: #141b24;
+    --line: #253141;
+    --fg: #dbe3ec;
+    --muted: #8693a3;
+    --player: #f0c25a;
+    --threat: #e9577b;
+    --mind: #58c7d4;
+    --font-display: 'Syne', 'Arial Black', system-ui, sans-serif;
+    --font-body: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.5 var(--font-body);
+    padding-inline: 16px;
+    padding-block: 20px 28px;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 16px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
+  h1 {
+    font: 800 clamp(30px, 6vw, 46px)/1 var(--font-display);
+    letter-spacing: -0.02em;
+    margin: 0;
+    text-transform: uppercase;
+  }
+  header p { margin: 0; color: var(--muted); max-width: 52ch; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
+  @media (max-width: 880px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+
+  .stage {
+    position: relative;
+    width: 100%;
+    max-width: 100%;
+    aspect-ratio: 4 / 3;
+    background: #0a0f14;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  canvas#cv { display: block; width: 100%; height: 100%; touch-action: none; }
+  .overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
+    gap: 12px; padding: 5% 6%;
+    background: rgba(10, 15, 20, 0.88);
+    overflow-y: auto;
+  }
+  .overlay h2 { font: 800 clamp(24px, 5vw, 38px)/1.05 var(--font-display); margin: 0; text-transform: uppercase; letter-spacing: -0.01em; }
+  .overlay p { margin: 0; color: var(--muted); max-width: 54ch; }
+  .overlay ul { margin: 0; padding-left: 18px; max-width: 54ch; display: grid; gap: 4px; }
+  .overlay li { color: var(--fg); }
+  .overlay li::marker { color: var(--mind); }
+  .overlay .stat { font: 500 12px var(--font-mono); color: var(--mind); letter-spacing: 0.04em; text-transform: uppercase; }
+
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 10px; }
+  .help { margin: 0; color: var(--muted); font-size: 13px; flex: 1 1 260px; min-width: 0; }
+  .toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); cursor: pointer; }
+  .toggle input { accent-color: var(--mind); width: 16px; height: 16px; }
+  .btn {
+    font: 500 13px var(--font-mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    min-height: 44px;
+    padding: 10px 18px;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--fg);
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  .btn:hover { border-color: var(--muted); }
+  .btn:focus-visible, .toggle input:focus-visible { outline: 2px solid var(--mind); outline-offset: 2px; }
+  .btn.primary { background: var(--player); border-color: var(--player); color: #1a1405; font-weight: 500; }
+  .btn.ghost { min-height: 36px; padding: 6px 12px; font-size: 11px; color: var(--muted); }
+  #dashBtn { min-width: 120px; }
+
+  .mind { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; display: grid; gap: 16px; min-width: 0; }
+  .mind h2 { font: 500 11px var(--font-mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  .mind h2.big { color: var(--mind); font-size: 12px; margin: 0; }
+  .fam { display: flex; justify-content: space-between; align-items: baseline; font: 500 13px var(--font-mono); font-variant-numeric: tabular-nums; }
+  .fam b { font-weight: 500; color: var(--mind); }
+  .meter { height: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 2px; overflow: hidden; }
+  .meter i { display: block; height: 100%; background: var(--mind); width: 0; transition: width 0.25s linear; }
+  .meter.threat i { background: var(--threat); }
+  #heat { width: 100%; aspect-ratio: 5 / 4; display: block; background: var(--bg); border: 1px solid var(--line); border-radius: 3px; }
+  .rows { display: grid; gap: 8px; }
+  .row { display: grid; grid-template-columns: 74px 30px minmax(0, 1fr) 30px; gap: 6px; align-items: center; font-size: 12px; }
+  .row .k { color: var(--fg); }
+  .row .e { color: var(--muted); font: 400 10px var(--font-mono); letter-spacing: 0.04em; }
+  .row .e:first-of-type { text-align: right; }
+  .bi { position: relative; height: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 2px; }
+  .bi i { position: absolute; top: 0; bottom: 0; background: var(--mind); left: 50%; width: 0; transition: left 0.25s linear, width 0.25s linear; }
+  .bi::after { content: ''; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--muted); }
+  .row2 { display: grid; grid-template-columns: 78px minmax(0, 1fr) 26px; gap: 8px; align-items: center; font-size: 12px; }
+  .row2 .n { font: 400 11px var(--font-mono); color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+  #log { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 12px; color: var(--muted); }
+  #log li { padding-left: 10px; border-left: 2px solid var(--line); }
+  #log li:first-child { color: var(--fg); border-left-color: var(--mind); }
+  .note { font-size: 12px; color: var(--muted); margin: 0; }
+  [hidden] { display: none !important; }
+  @media (prefers-reduced-motion: reduce) { .meter i, .bi i { transition: none; } }
+  html { background: #0d1218; }
+  body { margin: 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Mnemos</h1>
+    <p>A boss that studies how you move, then builds counters out of your habits.</p>
+  </header>
+
+  <div class="layout">
+    <main>
+      <div class="stage" id="stage">
+        <canvas id="cv" aria-label="Game arena"></canvas>
+        <div class="overlay" id="ov">
+          <h2 id="ovTitle">Mnemos</h2>
+          <div id="ovBody">
+            <p>Mnemos watches where you stand, which way you circle and how you dash. Rely on a habit and it learns to punish it. Its memory carries over between rounds, so change how you play.</p>
+          </div>
+          <button class="btn primary" id="ovBtn" type="button">Begin round 1</button>
+        </div>
+      </div>
+      <div class="controls">
+        <p class="help">Move with WASD or arrow keys, or drag inside the arena. Dash with Space. You fire at the boss automatically. P pauses.</p>
+        <button class="btn" id="dashBtn" type="button">Dash</button>
+        <label class="toggle" for="viewToggle"><input type="checkbox" id="viewToggle" checked> Show what the boss sees</label>
+      </div>
+    </main>
+
+    <aside class="mind" aria-label="Boss readout">
+      <div>
+        <h2 class="big">Boss readout</h2>
+      </div>
+      <div>
+        <div class="fam"><span id="famLabel">Observing</span><b id="famPct">0%</b></div>
+        <div class="meter" style="margin-top:6px"><i id="famBar"></i></div>
+      </div>
+      <div>
+        <h2>Where you spend time</h2>
+        <canvas id="heat" width="200" height="160"></canvas>
+      </div>
+      <div>
+        <h2>Habits it has found</h2>
+        <div class="rows">
+          <div class="row"><span class="k">Circling</span><span class="e">CCW</span><div class="bi"><i id="h-orbit"></i></div><span class="e">CW</span></div>
+          <div class="row"><span class="k">Dash side</span><span class="e">CCW</span><div class="bi"><i id="h-dtan"></i></div><span class="e">CW</span></div>
+          <div class="row"><span class="k">Dash line</span><span class="e">IN</span><div class="bi"><i id="h-drad"></i></div><span class="e">OUT</span></div>
+          <div class="row"><span class="k">Range</span><span class="e">NEAR</span><div class="bi"><i id="h-dist"></i></div><span class="e">FAR</span></div>
+          <div class="row"><span class="k">Standing still</span><span class="e"></span><div class="bi"><i id="h-still"></i></div><span class="e"></span></div>
+        </div>
+      </div>
+      <div>
+        <h2>Which counters work</h2>
+        <div class="rows" id="eff"></div>
+      </div>
+      <div>
+        <h2>Latest decisions</h2>
+        <ul id="log"><li>Waiting for the fight to start.</li></ul>
+      </div>
+      <button class="btn ghost" id="resetMem" type="button">Wipe boss memory</button>
+    </aside>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var W = 800, H = 600, TAU = Math.PI * 2;
+  var clamp = function (v, a, b) { return Math.max(a, Math.min(b, v)); };
+  var lerp = function (a, b, t) { return a + (b - a) * t; };
+  var rnd = function (a, b) { return a + Math.random() * (b - a); };
+  var $ = function (id) { return document.getElementById(id); };
+
+  var css = getComputedStyle(document.documentElement);
+  var col = function (n) { return css.getPropertyValue(n).trim(); };
+  var C = { player: col('--player'), threat: col('--threat'), mind: col('--mind'), fg: col('--fg'), muted: col('--muted'), line: col('--line') };
+
+  var KINDS = ['aimed', 'lead', 'ring', 'zone', 'sweep', 'trap'];
+  var LABEL = { aimed: 'Snap shot', lead: 'Lead shot', ring: 'Gap ring', zone: 'Zone slam', sweep: 'Sweep', trap: 'Dash trap' };
+  var DUR = { aimed: 0.9, lead: 1.2, ring: 1.4, zone: 1.4, sweep: 2.4, trap: 1.4 };
+
+  var cv = $('cv'), ctx = cv.getContext('2d');
+  var dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  var heatCv = $('heat'), hctx = heatCv.getContext('2d');
+
+  /* ---------------- The boss's model of the player ---------------- */
+  function Mind() { this.reset(); }
+  Mind.prototype.reset = function () {
+    this.heat = new Float32Array(80);
+    this.heatAcc = 0;
+    this.time = 0;
+    this.orbit = 0;      // -1 counter-clockwise .. +1 clockwise (screen space)
+    this.omega = 0;      // smoothed angular velocity around the boss, rad/s
+    this.dashRad = 0; this.dashTan = 0; this.dashN = 0;
+    this.dashReact = 0.45; this.reactN = 0;
+    this.dist = 260;
+    this.still = 0.2;
+    this.vel = { x: 0, y: 0 };
+    this.q = {}; this.n = {};
+    for (var i = 0; i < KINDS.length; i++) { this.q[KINDS[i]] = 0.25; this.n[KINDS[i]] = 0; }
+    this.last = null;
+  };
+  Object.defineProperty(Mind.prototype, 'know', { get: function () { return 1 - Math.exp(-this.time / 40); } });
+
+  Mind.prototype.observe = function (dt, p, b) {
+    var rx = p.x - b.x, ry = p.y - b.y, d = Math.hypot(rx, ry) || 1;
+    var sp = Math.hypot(p.vx, p.vy);
+    var a = 1 - Math.exp(-dt / 1.5);
+    this.vel.x += (p.vx - this.vel.x) * a;
+    this.vel.y += (p.vy - this.vel.y) * a;
+    this.dist += (d - this.dist) * (1 - Math.exp(-dt / 4));
+    this.still += ((sp < 25 ? 1 : 0) - this.still) * (1 - Math.exp(-dt / 4));
+    if (sp > 30 && p.dash <= 0) {
+      var w = (rx * p.vy - ry * p.vx) / (d * d);
+      var aw = 1 - Math.exp(-dt / 3);
+      this.omega += (w - this.omega) * aw;
+      this.orbit += (clamp(w / 0.8, -1, 1) - this.orbit) * aw;
+    }
+    this.time += dt;
+    this.heatAcc += dt;
+    if (this.heatAcc >= 0.1) {
+      this.heatAcc -= 0.1;
+      for (var i = 0; i < 80; i++) this.heat[i] *= 0.996;
+      var c = clamp(Math.floor(p.x / 80), 0, 9), r = clamp(Math.floor(p.y / 75), 0, 7);
+      this.heat[r * 10 + c] += 1;
+    }
+  };
+  Mind.prototype.onDash = function (p, b, dx, dy) {
+    var rx = p.x - b.x, ry = p.y - b.y, d = Math.hypot(rx, ry) || 1;
+    var ux = rx / d, uy = ry / d, tx = -uy, ty = ux;
+    this.dashN++;
+    var a = Math.max(0.3, 1 / this.dashN);
+    this.dashRad += (dx * ux + dy * uy - this.dashRad) * a;
+    this.dashTan += (dx * tx + dy * ty - this.dashTan) * a;
+  };
+  Mind.prototype.noteReact = function (r) {
+    this.reactN++;
+    var a = Math.max(0.3, 1 / this.reactN);
+    this.dashReact += (r - this.dashReact) * a;
+  };
+  Mind.prototype.predictDash = function (p, b) {
+    var rx = p.x - b.x, ry = p.y - b.y, d = Math.hypot(rx, ry) || 1;
+    var ux = rx / d, uy = ry / d, tx = -uy, ty = ux;
+    var x = this.dashRad * ux + this.dashTan * tx, y = this.dashRad * uy + this.dashTan * ty;
+    var m = Math.hypot(x, y);
+    if (this.dashN < 1 || m < 0.2) { x = tx; y = ty; m = 1; }
+    return { x: x / m, y: y / m };
+  };
+  Mind.prototype.predict = function (p, b, t) {
+    var k = this.know, rx = p.x - b.x, ry = p.y - b.y;
+    if (Math.abs(this.orbit) > 0.35 && k > 0.15) {
+      var d = Math.hypot(rx, ry), a = Math.atan2(ry, rx) + this.omega * t;
+      return { x: clamp(b.x + Math.cos(a) * d, 14, W - 14), y: clamp(b.y + Math.sin(a) * d, 14, H - 14) };
+    }
+    var vx = lerp(p.vx, this.vel.x, 0.4 * k), vy = lerp(p.vy, this.vel.y, 0.4 * k);
+    return { x: clamp(p.x + vx * t, 14, W - 14), y: clamp(p.y + vy * t, 14, H - 14) };
+  };
+  Mind.prototype.hotCell = function () {
+    var best = 0, bi = 0, i;
+    for (i = 0; i < 80; i++) if (this.heat[i] > best) { best = this.heat[i]; bi = i; }
+    return { c: bi % 10, r: Math.floor(bi / 10), v: best };
+  };
+  Mind.prototype.hotspot = function () {
+    var h = this.hotCell();
+    if (h.v < 1) return { x: W / 2, y: H / 2 };
+    return { x: (h.c + 0.5) * 80, y: (h.r + 0.5) * 75 };
+  };
+  Mind.prototype.learn = function (kind, reward) {
+    this.q[kind] += (reward - this.q[kind]) * 0.3;
+    this.n[kind]++;
+  };
+  Mind.prototype.reason = function (kind) {
+    var cw = this.orbit > 0 ? 'clockwise' : 'counter-clockwise';
+    var dcw = this.dashTan > 0 ? 'clockwise' : 'counter-clockwise';
+    var k = this.know;
+    switch (kind) {
+      case 'aimed': return k < 0.2 ? 'Still learning you. Firing where you stand.' : 'Forcing you to keep moving.';
+      case 'lead': return (Math.abs(this.orbit) > 0.35 && k > 0.15) ? 'You circle ' + cw + '. Leading the curve.' : 'Leading your straight-line movement.';
+      case 'ring': return (this.dashN > 0 && k > 0.1) ? 'You dash ' + dcw + '. The gap opens on the other side.' : 'Opening a wide gap to see which way you dash.';
+      case 'zone': return this.still > 0.3 ? 'You hold still a lot. Slamming that spot.' : (k > 0.2 ? 'Marking your favorite ground.' : 'Marking where you stand.');
+      case 'sweep': return (Math.abs(this.orbit) > 0.25 && k > 0.1) ? 'You orbit ' + cw + '. Sweeping across your path.' : 'Testing a sweep.';
+      default: return 'You dash about ' + Math.round(this.dashReact * 1000) + ' ms after a threat. Timing a second volley.';
+    }
+  };
+  Mind.prototype.choose = function () {
+    var k = this.know, self = this, pr = {
+      aimed: 0.12 * (1 - k) + 0.05,
+      lead: 0.25 + 0.35 * k,
+      ring: 0.25 + 0.35 * k * Math.min(1, Math.abs(this.dashTan) * 1.5 + 0.3),
+      zone: 0.2 + 0.5 * this.still + 0.15 * k,
+      sweep: 0.2 + 0.5 * Math.abs(this.orbit) * Math.min(1, k * 2),
+      trap: this.dashN >= 3 ? 0.2 + 0.4 * k : 0
+    };
+    var sc = {}, total = 0;
+    KINDS.forEach(function (x) {
+      if (pr[x] === 0) { sc[x] = 0; return; }
+      var s = pr[x] * (1 - 0.45 * k) + self.q[x] * (0.25 + 0.9 * k);
+      if (x === self.last) s *= 0.35;
+      sc[x] = Math.pow(Math.max(0.02, s), 1.6);
+      total += sc[x];
+    });
+    var eps = 0.3 - 0.18 * k, kind = null;
+    if (Math.random() < eps) {
+      var av = KINDS.filter(function (x) { return pr[x] > 0 && x !== self.last; });
+      kind = av[Math.floor(Math.random() * av.length)];
+    } else {
+      var r = Math.random() * total;
+      kind = 'aimed';
+      for (var i = 0; i < KINDS.length; i++) { r -= sc[KINDS[i]]; if (r <= 0) { kind = KINDS[i]; break; } }
+    }
+    this.last = kind;
+    return { kind: kind, why: this.reason(kind) };
+  };
+  Mind.prototype.insights = function () {
+    if (this.time < 8) return ['Not enough data yet. It needs a few more seconds of you moving.'];
+    var out = [];
+    if (Math.abs(this.orbit) > 0.25) out.push('You circle ' + (this.orbit > 0 ? 'clockwise' : 'counter-clockwise') + ' around it (' + Math.round(Math.abs(this.orbit) * 100) + '% lean).');
+    if (this.dashN >= 2) {
+      var side = Math.abs(this.dashTan) > 0.25 ? (this.dashTan > 0 ? 'clockwise' : 'counter-clockwise') : 'straight';
+      out.push('You dash ' + side + (this.dashRad > 0.3 ? ' and away from it' : this.dashRad < -0.3 ? ' and toward it' : '') + ', about ' + Math.round(this.dashReact * 1000) + ' ms after a threat appears.');
+    }
+    if (this.still > 0.25) out.push('You stand still ' + Math.round(this.still * 100) + '% of the time.');
+    var h = this.hotCell();
+    var cx = h.c < 3 ? 'left' : h.c > 6 ? 'right' : 'center', cy = h.r < 3 ? 'upper' : h.r > 4 ? 'lower' : 'middle';
+    out.push('You favor the ' + ((cx === 'center' && cy === 'middle') ? 'center' : (cy === 'middle' ? '' : cy + ' ') + (cx === 'center' ? '' : cx)).trim() + ' of the arena.');
+    out.push('You fight from about ' + Math.round(this.dist) + ' units away.');
+    return out;
+  };
+
+  /* ---------------- Game state ---------------- */
+  var mind = new Mind();
+  var G = null, state = 'title', paused = false;
+  var keys = {}, joy = { on: false, ox: 0, oy: 0, x: 0, y: 0 };
+  var dashQueued = false, logLines = [];
+
+  function newGame(round) {
+    var hp = 300 + 110 * (round - 1);
+    G = {
+      round: round, time: 0, aid: 0, shake: 0, hits: 0, ghost: null, banner: null,
+      p: { x: W / 2, y: H - 110, vx: 0, vy: 0, r: 8, hp: 5, inv: 0, dash: 0, dcd: 0, dx: 0, dy: -1, fire: 0 },
+      b: { x: W / 2, y: 150, r: 34, hp: hp, max: hp, flash: 0, ph: rnd(0, 6), timer: 1.4, look: { x: W / 2, y: H / 2 } },
+      bullets: [], zones: [], shots: [], sched: [], attacks: {},
+      threatStart: -9, threatLast: -9
+    };
+  }
+
+  function logAdd(text) {
+    logLines.unshift(text);
+    if (logLines.length > 5) logLines.pop();
+  }
+
+  function settle(id) {
+    var a = G.attacks[id];
+    if (!a || a.live > 0 || a.pending > 0) return;
+    mind.learn(a.kind, a.hit ? 1 : (a.near ? 0.35 : 0));
+    delete G.attacks[id];
+  }
+  function fire(id, x, y, ang, sp, r) {
+    var a = G.attacks[id]; if (!a) return;
+    a.live++;
+    G.bullets.push({ x: x, y: y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, r: r || 5, id: id, life: 7 });
+  }
+  function spawnZone(id, x, y, r, delay) {
+    var a = G.attacks[id]; if (!a) return;
+    a.pending++;
+    G.zones.push({ x: x, y: y, r: r, t: 0, delay: delay, id: id, fired: false, flash: 0 });
+    G.ghost = { x: x, y: y, t: 0.6, t0: 0.6 };
+  }
+
+  function launch(pick) {
+    var id = ++G.aid;
+    G.attacks[id] = { kind: pick.kind, hit: false, near: false, live: 0, pending: 1 };
+    var p = G.p, b = G.b, k = mind.know, rd = G.round;
+    var bear = function () { return Math.atan2(p.y - b.y, p.x - b.x); };
+    var at = function (d, fn) { G.attacks[id].pending++; G.sched.push({ t: d, id: id, fn: fn }); };
+    var i;
+    if (pick.kind === 'aimed') {
+      for (i = 0; i < 3; i++) at(0.25 + i * 0.2, function () { G.b.look = { x: p.x, y: p.y }; fire(id, b.x, b.y, bear(), 250 + 10 * rd, 5); });
+    } else if (pick.kind === 'lead') {
+      for (i = 0; i < 4; i++) at(0.3 + i * 0.22, function () {
+        var sp = 300 + 10 * rd, d = Math.hypot(p.x - b.x, p.y - b.y);
+        var q = mind.predict(p, b, d / sp), w = 0.35 + 0.65 * k;
+        var tx = lerp(p.x, q.x, w), ty = lerp(p.y, q.y, w);
+        G.ghost = { x: tx, y: ty, t: 0.6, t0: 0.6 };
+        fire(id, b.x, b.y, Math.atan2(ty - b.y, tx - b.x), sp, 5);
+      });
+    } else if (pick.kind === 'ring') {
+      [0, 1].forEach(function (r) {
+        at(0.45 + r * 0.85, function () {
+          var s = mind.dashN > 0 ? (Math.sign(mind.dashTan) || 1) : (Math.random() < 0.5 ? 1 : -1);
+          var gc = bear() - s * 0.95 * k, half = lerp(0.62, 0.34, k), n = 44, off = rnd(0, TAU / n);
+          for (var j = 0; j < n; j++) {
+            var a = off + j * TAU / n;
+            if (Math.abs(Math.atan2(Math.sin(a - gc), Math.cos(a - gc))) < half) continue;
+            fire(id, b.x, b.y, a, 140 + 8 * rd + r * 12, 6);
+          }
+          G.ghost = { x: b.x + Math.cos(gc) * 130, y: b.y + Math.sin(gc) * 130, t: 0.7, t0: 0.7 };
+        });
+      });
+    } else if (pick.kind === 'zone') {
+      var cnt = 1 + Math.floor(2.2 * k) + (rd > 1 ? 1 : 0), del = 0.95 - 0.2 * k;
+      for (i = 0; i < cnt; i++) (function (idx) {
+        at(0.2 + idx * 0.35, function () {
+          var tx, ty;
+          if (idx === 0) { var q = mind.predict(p, b, del); tx = q.x; ty = q.y; }
+          else if (idx === 1 && k > 0.2) { var h = mind.hotspot(); tx = h.x; ty = h.y; }
+          else { tx = p.x + rnd(-60, 60); ty = p.y + rnd(-60, 60); }
+          spawnZone(id, clamp(tx, 40, W - 40), clamp(ty, 40, H - 40), 64, del);
+        });
+      })(i);
+    } else if (pick.kind === 'sweep') {
+      var s = (Math.abs(mind.orbit) > 0.25 && k > 0.1) ? Math.sign(mind.orbit) : (Math.random() < 0.5 ? 1 : -1);
+      var start = bear() + s * (0.4 + 0.9 * k), w = 1.5 + 0.1 * rd;
+      for (i = 0; i < 30; i++) (function (j) {
+        at(0.35 + j * 0.07, function () { fire(id, b.x, b.y, start - s * w * (j * 0.07), 200 + 8 * rd, 5); });
+      })(i);
+    } else {
+      var d0 = Math.hypot(p.x - b.x, p.y - b.y);
+      var wait = clamp(Math.max(0, d0 - 190) / 210 + mind.dashReact + 0.04, 0.3, 1.6);
+      at(0.3, function () { fire(id, b.x, b.y, bear(), 210, 6); });
+      at(0.3 + wait, function () {
+        var dv = mind.predictDash(p, b), tx, ty;
+        if (p.dash > 0) { tx = p.x + p.vx * 0.2; ty = p.y + p.vy * 0.2; }
+        else { tx = p.x + dv.x * 105; ty = p.y + dv.y * 105; }
+        tx = clamp(tx, 14, W - 14); ty = clamp(ty, 14, H - 14);
+        G.ghost = { x: tx, y: ty, t: 0.8, t0: 0.8 };
+        G.b.look = { x: tx, y: ty };
+        var base = Math.atan2(ty - b.y, tx - b.x);
+        for (var j = -2; j <= 2; j++) fire(id, b.x, b.y, base + j * 0.13, 360, 5);
+      });
+    }
+    G.attacks[id].pending--;
+    settle(id);
+    var text = LABEL[pick.kind] + ': ' + pick.why;
+    G.banner = { text: text, t: 3.4 };
+    logAdd(text);
+  }
+
+  function hurt(id) {
+    var p = G.p;
+    p.hp--; p.inv = 1.1; G.shake = 10; G.hits++;
+    if (id && G.attacks[id]) G.attacks[id].hit = true;
+    if (p.hp <= 0) endGame(false);
+  }
+
+  function doDash(ix, iy) {
+    var p = G.p, b = G.b, dx = ix, dy = iy;
+    if (Math.hypot(dx, dy) < 0.1) { dx = p.x - b.x; dy = p.y - b.y; }
+    var m = Math.hypot(dx, dy) || 1; dx /= m; dy /= m;
+    p.dash = 0.16; p.dcd = 0.95; p.dx = dx; p.dy = dy;
+    if (G.time - G.threatLast < 0.35) {
+      var r = G.time - G.threatStart;
+      if (r > 0.08 && r < 1.4) mind.noteReact(r);
+    }
+    mind.onDash(p, b, dx, dy);
+  }
+
+  function update(dt) {
+    G.time += dt;
+    var p = G.p, b = G.b, i;
+    var ix = (keys.right ? 1 : 0) - (keys.left ? 1 : 0), iy = (keys.down ? 1 : 0) - (keys.up ? 1 : 0);
+    if (joy.on) { ix += joy.x; iy += joy.y; }
+    var m = Math.hypot(ix, iy); if (m > 1) { ix /= m; iy /= m; }
+    if (dashQueued) { dashQueued = false; if (p.dcd <= 0 && p.dash <= 0) doDash(ix, iy); }
+    p.dcd = Math.max(0, p.dcd - dt);
+    if (p.dash > 0) { p.dash -= dt; p.vx = p.dx * 640; p.vy = p.dy * 640; }
+    else { var ax = 1 - Math.exp(-dt * 18); p.vx += (ix * 230 - p.vx) * ax; p.vy += (iy * 230 - p.vy) * ax; }
+    p.x = clamp(p.x + p.vx * dt, 14, W - 14);
+    p.y = clamp(p.y + p.vy * dt, 14, H - 14);
+    p.inv = Math.max(0, p.inv - dt);
+    G.shake = Math.max(0, G.shake - dt * 30);
+
+    b.ph += dt; b.flash = Math.max(0, b.flash - dt);
+    var tx = W / 2 + Math.sin(b.ph * 0.45) * 210, ty = 170 + Math.cos(b.ph * 0.31) * 70;
+    b.x += (tx - b.x) * Math.min(1, dt * 1.2);
+    b.y += (ty - b.y) * Math.min(1, dt * 1.2);
+    var tgt = G.ghost ? G.ghost : p;
+    b.look.x += (tgt.x - b.look.x) * Math.min(1, dt * 8);
+    b.look.y += (tgt.y - b.look.y) * Math.min(1, dt * 8);
+
+    mind.observe(dt, p, b);
+
+    b.timer -= dt;
+    if (b.timer <= 0) {
+      var pick = mind.choose();
+      launch(pick);
+      b.timer = Math.max(0.85, 1.7 - 0.45 * (1 - b.hp / b.max) - 0.06 * (G.round - 1)) + DUR[pick.kind] * 0.55;
+    }
+
+    for (i = G.sched.length - 1; i >= 0; i--) {
+      var s = G.sched[i]; s.t -= dt;
+      if (s.t <= 0) {
+        G.sched.splice(i, 1);
+        s.fn();
+        var a = G.attacks[s.id];
+        if (a) { a.pending--; settle(s.id); }
+      }
+    }
+    if (state !== 'play') return;
+
+    for (i = G.bullets.length - 1; i >= 0; i--) {
+      var k = G.bullets[i];
+      k.x += k.vx * dt; k.y += k.vy * dt; k.life -= dt;
+      var dx = p.x - k.x, dy = p.y - k.y, d = Math.hypot(dx, dy), at = G.attacks[k.id];
+      if (d < 30 && at) at.near = true;
+      if (d < 190 && (k.vx * dx + k.vy * dy) > 0) {
+        if (G.time - G.threatLast > 0.7) G.threatStart = G.time;
+        G.threatLast = G.time;
+      }
+      var gone = k.life <= 0 || k.x < -30 || k.x > W + 30 || k.y < -30 || k.y > H + 30;
+      var hit = d < k.r + p.r - 1 && p.dash <= 0 && p.inv <= 0;
+      if (hit) hurt(k.id);
+      if (hit || gone) {
+        G.bullets.splice(i, 1);
+        if (at) { at.live--; settle(k.id); }
+        if (state !== 'play') return;
+      }
+    }
+
+    for (i = G.zones.length - 1; i >= 0; i--) {
+      var z = G.zones[i]; z.t += dt;
+      if (!z.fired && z.t >= z.delay) {
+        z.fired = true; z.flash = 0.3;
+        var zd = Math.hypot(p.x - z.x, p.y - z.y);
+        if (zd < z.r + p.r - 2 && p.dash <= 0 && p.inv <= 0) hurt(z.id);
+        else if (zd < z.r + 45 && G.attacks[z.id]) G.attacks[z.id].near = true;
+        if (state !== 'play') return;
+      }
+      if (z.fired) {
+        z.flash -= dt;
+        if (z.flash <= 0) {
+          G.zones.splice(i, 1);
+          var za = G.attacks[z.id]; if (za) { za.pending--; settle(z.id); }
+        }
+      }
+    }
+
+    if (Math.hypot(p.x - b.x, p.y - b.y) < b.r + p.r && p.inv <= 0 && p.dash <= 0) { hurt(0); if (state !== 'play') return; }
+
+    p.fire -= dt;
+    if (p.fire <= 0) {
+      p.fire = 0.14;
+      var ang = Math.atan2(b.y - p.y, b.x - p.x);
+      G.shots.push({ x: p.x, y: p.y, vx: Math.cos(ang) * 560, vy: Math.sin(ang) * 560 });
+    }
+    for (i = G.shots.length - 1; i >= 0; i--) {
+      var sh = G.shots[i];
+      sh.x += sh.vx * dt; sh.y += sh.vy * dt;
+      if (Math.hypot(sh.x - b.x, sh.y - b.y) < b.r + 3) {
+        b.hp--; b.flash = 0.08; G.shots.splice(i, 1);
+        if (b.hp <= 0) { endGame(true); return; }
+      } else if (sh.x < -10 || sh.x > W + 10 || sh.y < -10 || sh.y > H + 10) G.shots.splice(i, 1);
+    }
+    if (G.ghost) { G.ghost.t -= dt; if (G.ghost.t <= 0) G.ghost = null; }
+    if (G.banner) { G.banner.t -= dt; if (G.banner.t <= 0) G.banner = null; }
+  }
+
+  /* ---------------- Drawing ---------------- */
+  function circle(x, y, r) { ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); }
+
+  function draw() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#0a0f14'; ctx.fillRect(0, 0, W, H);
+    ctx.save();
+    if (G.shake > 0) ctx.translate(rnd(-1, 1) * G.shake * 0.5, rnd(-1, 1) * G.shake * 0.5);
+
+    ctx.strokeStyle = C.line; ctx.globalAlpha = 0.35; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (var x = 0; x <= W; x += 50) { ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H); }
+    for (var y = 0; y <= H; y += 50) { ctx.moveTo(0, y + 0.5); ctx.lineTo(W, y + 0.5); }
+    ctx.stroke(); ctx.globalAlpha = 1;
+
+    if ($('viewToggle').checked) {
+      var mx = 0, i;
+      for (i = 0; i < 80; i++) if (mind.heat[i] > mx) mx = mind.heat[i];
+      if (mx > 1) {
+        ctx.fillStyle = C.mind;
+        for (i = 0; i < 80; i++) {
+          var v = mind.heat[i] / mx;
+          if (v < 0.05) continue;
+          ctx.globalAlpha = v * 0.2;
+          ctx.fillRect((i % 10) * 80, Math.floor(i / 10) * 75, 80, 75);
+        }
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    var p = G.p, b = G.b, j;
+    for (j = 0; j < G.zones.length; j++) {
+      var z = G.zones[j];
+      if (!z.fired) {
+        var f = clamp(z.t / z.delay, 0, 1);
+        ctx.fillStyle = C.threat; ctx.globalAlpha = 0.06 + 0.2 * f * f; circle(z.x, z.y, z.r); ctx.fill();
+        ctx.globalAlpha = 0.9; ctx.strokeStyle = C.threat; ctx.lineWidth = 2; ctx.setLineDash([6, 6]); circle(z.x, z.y, z.r); ctx.stroke(); ctx.setLineDash([]);
+        ctx.globalAlpha = 0.9; ctx.lineWidth = 2; circle(z.x, z.y, z.r * f); ctx.stroke();
+      } else {
+        ctx.globalAlpha = clamp(z.flash / 0.3, 0, 1) * 0.8; ctx.fillStyle = '#ffd0da'; circle(z.x, z.y, z.r); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    if (G.ghost) {
+      var ga = G.ghost.t / G.ghost.t0;
+      ctx.globalAlpha = 0.25 + 0.65 * ga; ctx.strokeStyle = C.mind; ctx.lineWidth = 1.5;
+      ctx.setLineDash([3, 4]); circle(G.ghost.x, G.ghost.y, 15); ctx.stroke(); ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(G.ghost.x - 22, G.ghost.y); ctx.lineTo(G.ghost.x - 8, G.ghost.y);
+      ctx.moveTo(G.ghost.x + 8, G.ghost.y); ctx.lineTo(G.ghost.x + 22, G.ghost.y);
+      ctx.moveTo(G.ghost.x, G.ghost.y - 22); ctx.lineTo(G.ghost.x, G.ghost.y - 8);
+      ctx.moveTo(G.ghost.x, G.ghost.y + 8); ctx.lineTo(G.ghost.x, G.ghost.y + 22);
+      ctx.stroke(); ctx.globalAlpha = 1;
+    }
+
+    for (j = 0; j < G.bullets.length; j++) {
+      var k = G.bullets[j];
+      ctx.fillStyle = C.threat; circle(k.x, k.y, k.r); ctx.fill();
+      ctx.fillStyle = '#ffd0da'; circle(k.x, k.y, k.r * 0.4); ctx.fill();
+    }
+
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.strokeStyle = C.threat; ctx.lineWidth = 2; ctx.globalAlpha = 0.7;
+    ctx.rotate(G.time * 0.5);
+    ctx.beginPath();
+    for (j = 0; j < 16; j++) {
+      var ta = j * TAU / 16, r1 = b.r + 6, r2 = b.r + (j % 2 ? 11 : 16);
+      ctx.moveTo(Math.cos(ta) * r1, Math.sin(ta) * r1); ctx.lineTo(Math.cos(ta) * r2, Math.sin(ta) * r2);
+    }
+    ctx.stroke();
+    ctx.rotate(-G.time * 0.5); ctx.globalAlpha = 1;
+    ctx.fillStyle = b.flash > 0 ? '#ffffff' : '#1d1219'; circle(0, 0, b.r); ctx.fill();
+    ctx.strokeStyle = C.threat; ctx.lineWidth = 3; circle(0, 0, b.r); ctx.stroke();
+    var lx = b.look.x - b.x, ly = b.look.y - b.y, ld = Math.hypot(lx, ly) || 1, off = Math.min(13, ld * 0.06);
+    var ox = lx / ld * off, oy = ly / ld * off;
+    ctx.fillStyle = C.mind; circle(ox, oy, 15); ctx.fill();
+    ctx.fillStyle = '#071014'; circle(ox * 1.5, oy * 1.5, 6); ctx.fill();
+    ctx.restore();
+
+    ctx.fillStyle = C.player;
+    for (j = 0; j < G.shots.length; j++) ctx.fillRect(G.shots[j].x - 2, G.shots[j].y - 2, 4, 4);
+
+    var blink = p.inv > 0 && Math.floor(G.time * 16) % 2 === 0;
+    if (p.dash > 0) {
+      ctx.strokeStyle = C.player; ctx.globalAlpha = 0.4; ctx.lineWidth = p.r * 1.6; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x - p.dx * 46, p.y - p.dy * 46); ctx.stroke();
+      ctx.globalAlpha = 1; ctx.lineCap = 'butt';
+    }
+    if (!blink) { ctx.fillStyle = C.player; circle(p.x, p.y, p.r); ctx.fill(); }
+    ctx.strokeStyle = p.dcd > 0 ? C.muted : C.player; ctx.globalAlpha = p.dcd > 0 ? 0.6 : 0.9; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r + 6, -Math.PI / 2, -Math.PI / 2 + TAU * (1 - p.dcd / 0.95)); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
+    if (joy.on) {
+      var rc = cv.getBoundingClientRect(), jx = (joy.ox - rc.left) * W / rc.width, jy = (joy.oy - rc.top) * H / rc.height;
+      ctx.strokeStyle = C.fg; ctx.globalAlpha = 0.35; ctx.lineWidth = 2; circle(jx, jy, 40); ctx.stroke();
+      circle(jx + joy.x * 40, jy + joy.y * 40, 14); ctx.stroke(); ctx.globalAlpha = 1;
+    }
+
+    // HUD
+    var h;
+    for (h = 0; h < 5; h++) {
+      ctx.beginPath(); ctx.arc(20 + h * 20, 22, 6, 0, TAU);
+      if (h < p.hp) { ctx.fillStyle = C.player; ctx.fill(); } else { ctx.strokeStyle = C.muted; ctx.lineWidth = 1.5; ctx.stroke(); }
+    }
+    var bw = 300, bx = W / 2 - bw / 2;
+    ctx.fillStyle = '#0d1218'; ctx.fillRect(bx, 16, bw, 10);
+    ctx.fillStyle = C.threat; ctx.fillRect(bx, 16, bw * clamp(b.hp / b.max, 0, 1), 10);
+    ctx.strokeStyle = C.line; ctx.lineWidth = 1; ctx.strokeRect(bx + 0.5, 16.5, bw - 1, 9);
+    ctx.font = '500 11px "IBM Plex Mono", monospace'; ctx.textAlign = 'center'; ctx.fillStyle = C.muted;
+    ctx.fillText('MNEMOS  ·  ROUND ' + G.round + '  ·  FAMILIARITY ' + Math.round(mind.know * 100) + '%', W / 2, 42);
+    ctx.textAlign = 'right'; ctx.fillText(Math.floor(G.time) + 's', W - 16, 26);
+    if (G.banner && state === 'play') {
+      ctx.textAlign = 'center'; ctx.font = '500 13px "IBM Plex Mono", monospace'; ctx.fillStyle = C.mind;
+      ctx.globalAlpha = clamp(G.banner.t / 0.6, 0, 1);
+      ctx.fillText(G.banner.text, W / 2, H - 18); ctx.globalAlpha = 1;
+    }
+    if (paused && state === 'play') {
+      ctx.fillStyle = 'rgba(10,15,20,0.7)'; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = C.fg; ctx.textAlign = 'center'; ctx.font = '500 18px "IBM Plex Mono", monospace';
+      ctx.fillText('PAUSED  ·  PRESS P OR TAP TO RESUME', W / 2, H / 2);
+    }
+    ctx.textAlign = 'left';
+  }
+
+  /* ---------------- Panel ---------------- */
+  var effRows = {};
+  (function buildEff() {
+    var host = $('eff');
+    KINDS.forEach(function (kd) {
+      var row = document.createElement('div'); row.className = 'row2';
+      row.innerHTML = '<span>' + LABEL[kd] + '</span><div class="meter threat"><i></i></div><span class="n">0</span>';
+      host.appendChild(row);
+      effRows[kd] = { bar: row.querySelector('i'), n: row.querySelector('.n') };
+    });
+  })();
+  function setBi(id, v) {
+    var el = $(id); v = clamp(v, -1, 1);
+    el.style.left = (50 + Math.min(0, v) * 50) + '%';
+    el.style.width = (Math.abs(v) * 50) + '%';
+  }
+  function updatePanel() {
+    var k = mind.know;
+    $('famPct').textContent = Math.round(k * 100) + '%';
+    $('famBar').style.width = (k * 100) + '%';
+    $('famLabel').textContent = k < 0.25 ? 'Observing' : (k < 0.6 ? 'Predicting' : 'Hunting');
+    setBi('h-orbit', mind.orbit);
+    setBi('h-dtan', mind.dashN ? mind.dashTan : 0);
+    setBi('h-drad', mind.dashN ? mind.dashRad : 0);
+    setBi('h-dist', (mind.dist - 250) / 150);
+    var st = $('h-still'); st.style.left = '0%'; st.style.width = (clamp(mind.still, 0, 1) * 100) + '%';
+    KINDS.forEach(function (kd) {
+      effRows[kd].bar.style.width = (clamp(mind.q[kd], 0, 1) * 100) + '%';
+      effRows[kd].n.textContent = mind.n[kd];
+    });
+    var ul = $('log');
+    ul.innerHTML = '';
+    (logLines.length ? logLines : ['Waiting for the fight to start.']).forEach(function (t) {
+      var li = document.createElement('li'); li.textContent = t; ul.appendChild(li);
+    });
+    // heat map
+    hctx.clearRect(0, 0, 200, 160);
+    var mx = 0, i;
+    for (i = 0; i < 80; i++) if (mind.heat[i] > mx) mx = mind.heat[i];
+    for (i = 0; i < 80; i++) {
+      var cx = (i % 10) * 20, cy = Math.floor(i / 10) * 20;
+      var v = mx > 0 ? mind.heat[i] / mx : 0;
+      hctx.fillStyle = C.mind; hctx.globalAlpha = 0.08 + v * 0.85;
+      hctx.fillRect(cx + 1, cy + 1, 18, 18);
+    }
+    hctx.globalAlpha = 1;
+    if (G) {
+      hctx.fillStyle = C.threat; hctx.beginPath(); hctx.arc(G.b.x / 4, G.b.y / 3.75, 5, 0, TAU); hctx.fill();
+      hctx.fillStyle = C.player; hctx.beginPath(); hctx.arc(G.p.x / 4, G.p.y / 3.75, 3.5, 0, TAU); hctx.fill();
+    }
+  }
+
+  /* ---------------- Flow ---------------- */
+  var ov = $('ov');
+  function endGame(win) {
+    if (state !== 'play') return;
+    state = win ? 'win' : 'over';
+    $('ovTitle').textContent = win ? 'Round ' + G.round + ' cleared' : 'Mnemos got you';
+    var body = $('ovBody'); body.innerHTML = '';
+    var intro = document.createElement('p');
+    intro.textContent = win ? 'It remembers all of this next round. What it learned about you:' : 'Here is what it learned about you:';
+    body.appendChild(intro);
+    var ul = document.createElement('ul'); ul.style.marginTop = '10px';
+    mind.insights().forEach(function (t) { var li = document.createElement('li'); li.textContent = t; ul.appendChild(li); });
+    body.appendChild(ul);
+    var st = document.createElement('p'); st.className = 'stat'; st.style.marginTop = '10px';
+    st.textContent = Math.floor(G.time) + 's  ·  ' + G.hits + ' hits taken  ·  familiarity ' + Math.round(mind.know * 100) + '%';
+    body.appendChild(st);
+    $('ovBtn').textContent = win ? 'Start round ' + (G.round + 1) : 'Fight again';
+    ov.hidden = false;
+    updatePanel();
+    $('ovBtn').focus();
+  }
+  $('ovBtn').addEventListener('click', function () {
+    if (state === 'win') newGame(G.round + 1); else if (state === 'over') newGame(G.round); else newGame(1);
+    state = 'play'; paused = false; ov.hidden = true; dashQueued = false;
+    logLines = [];
+    updatePanel();
+  });
+  $('resetMem').addEventListener('click', function () {
+    mind.reset(); logLines = []; updatePanel();
+  });
+
+  /* ---------------- Input ---------------- */
+  var keyMap = { ArrowLeft: 'left', a: 'left', A: 'left', ArrowRight: 'right', d: 'right', D: 'right', ArrowUp: 'up', w: 'up', W: 'up', ArrowDown: 'down', s: 'down', S: 'down' };
+  window.addEventListener('keydown', function (e) {
+    if (keyMap[e.key]) {
+      keys[keyMap[e.key]] = true;
+      if (state === 'play' && e.key.indexOf('Arrow') === 0) e.preventDefault();
+    } else if (e.code === 'Space' || e.key === 'Shift') {
+      if (state === 'play') { if (e.code === 'Space') e.preventDefault(); if (!e.repeat) dashQueued = true; }
+    } else if (e.key === 'p' || e.key === 'P') {
+      if (state === 'play') paused = !paused;
+    }
+  });
+  window.addEventListener('keyup', function (e) { if (keyMap[e.key]) keys[keyMap[e.key]] = false; });
+  window.addEventListener('blur', function () { keys = {}; joy.on = false; });
+  document.addEventListener('visibilitychange', function () { if (document.hidden && state === 'play') paused = true; });
+
+  cv.addEventListener('pointerdown', function (e) {
+    if (paused) { paused = false; return; }
+    joy.on = true; joy.ox = e.clientX; joy.oy = e.clientY; joy.x = 0; joy.y = 0;
+    try { cv.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  });
+  cv.addEventListener('pointermove', function (e) {
+    if (!joy.on) return;
+    var dx = (e.clientX - joy.ox) / 40, dy = (e.clientY - joy.oy) / 40, m = Math.hypot(dx, dy);
+    if (m > 1) { dx /= m; dy /= m; }
+    joy.x = dx; joy.y = dy;
+  });
+  var joyEnd = function () { joy.on = false; joy.x = 0; joy.y = 0; };
+  cv.addEventListener('pointerup', joyEnd);
+  cv.addEventListener('pointercancel', joyEnd);
+  $('dashBtn').addEventListener('pointerdown', function (e) { e.preventDefault(); if (state === 'play') dashQueued = true; });
+  $('dashBtn').addEventListener('keydown', function (e) { if (e.code === 'Space') e.preventDefault(); });
+
+  /* ---------------- Loop ---------------- */
+  newGame(1);
+  var lastTs = 0, panelT = 0;
+  function frame(ts) {
+    var dt = Math.min(0.033, (ts - lastTs) / 1000 || 0.016);
+    lastTs = ts;
+    if (state === 'play' && !paused) update(dt);
+    draw();
+    panelT += dt;
+    if (panelT > 0.25) { panelT = 0; updatePanel(); }
+    requestAnimationFrame(frame);
+  }
+  updatePanel();
+  requestAnimationFrame(frame);
+})();
+</script>
+
+</body>
+</html>
